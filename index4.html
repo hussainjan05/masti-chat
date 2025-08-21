@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Masti Chat</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./style.css">
+ 
+</head>
+<body>
+
+  <!-- AUTH -->
+  <section id="auth" class="auth">
+    <div class="card">
+      <h1 style="margin:0 0 6px 0">Masti Chat</h1>
+      <div class="muted">Sign in to start chatting</div>
+      <div style="height:14px"></div>
+      <button id="googleBtn" class="btn"><span>Continue with Google</span></button>
+      <div style="height:8px"></div>
+      <button id="guestBtn" class="btn secondary">Continue as Guest</button>
+      <div style="height:16px"></div>
+      <div class="muted">We use your Google name & photo in chats. Toggle theme → <button id="themeToggleAuth" class="btn ghost">Night/Day</button></div>
+    </div>
+  </section>
+
+  <!-- APP -->
+  <main id="app" class="app" style="display:none">
+    <!-- HAMBURGER BUTTON -->
+    <div id="hamburger" class="hamburger">
+      <span></span>
+      <span></span>
+      <span></span>
+    </div>
+    
+    <!-- OVERLAY FOR CLOSING SIDEBAR -->
+    <div id="sidebarOverlay" class="sidebar-overlay"></div>
+    
+    <!-- SIDEBAR -->
+    <aside class="panel sidebar" id="sidebar">
+      <div class="bar">
+        <div class="brand">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M16 2H8a6 6 0 00-6 6v6a6 6 0 006 6h.5l2.4 1.8a1 1 0 001.2 0L14.5 20H16a6 6 0 006-6V8a6 6 0 00-6-6z" stroke="var(--accent)" stroke-width="1.5"/></svg>
+          <span>Masti Chat</span>
+        </div>
+        <button id="signOut" class="btn danger">Sign out</button>
+      </div>
+      <div class="tools">
+        <input id="userSearch" class="input" placeholder="Search users to DM" />
+        <div style="display:flex;gap:8px">
+          <input id="roomInput" class="input" placeholder="Create / join room (e.g., saylani)" />
+          <button id="roomGo" class="btn secondary">Go</button>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <button id="themeToggle" class="btn ghost">Night/Day</button>
+          <span class="muted">Theme</span>
+        </div>
+      </div>
+      <div class="list" id="userList"></div>
+      <div class="bar"><strong>Rooms</strong><span class="muted" id="roomCount"></span></div>
+      <div class="list" id="roomList"></div>
+    </aside>
+
+    <!-- CHAT AREA -->
+    <section class="panel chat">
+      <div class="bar">
+        <div>
+          <div id="chatTitle" style="font-weight:800">Welcome 👋</div>
+          <div id="chatSubtitle" class="muted">Select a user to DM (E2EE) or a room to chat</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px">
+          <img id="mePhoto" class="avatar" alt="me" style="display:none"/>
+          <span id="meName" class="muted"></span>
+        </div>
+      </div>
+      <div id="messages" class="messages"></div>
+      <form id="composer" class="composer">
+        <input id="msgInput" class="input" placeholder="Type a message" autocomplete="off"/>
+        <button class="btn" id="sendBtn" type="submit">Send</button>
+      </form>
+    </section>
+  </main>
+  
+  <!-- cdn -->
+
+  <script src="https://www.gstatic.com/firebasejs/12.1.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/12.1.0/firebase-auth-compat.js"></script> 
+  <script src="https://www.gstatic.com/firebasejs/12.1.0/firebase-firestore-compat.js"></script>
+
+
+
+
+
+  <!-- Firebase v10 Modular SDKs -->
+
+  <script type="module" src="./script.js"></script>
+
+
+  <!--
+  ================= FIRESTORE SECURITY RULES (paste in console) =================
+
+  rules_version = '2';
+  service cloud.firestore {
+    match /databases/{database}/documents {
+      function isSignedIn() { return request.auth != null; }
+
+      match /users/{uid} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn() && request.auth.uid == uid; // user controls their own profile/public key
+      }
+
+      match /rooms/{roomId} {
+        allow read: if true; // public list
+        allow create: if isSignedIn();
+        allow update, delete: if false;
+        match /messages/{msgId} {
+          allow read: if true; // public chat (NOT E2EE)
+          allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid &&
+            request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() < 2000;
+          allow update, delete: if false;
+        }
+      }
+
+      match /conversations/{cid} {
+        allow read, create: if isSignedIn(); // metadata contains encrypted keys only
+        allow update, delete: if false;
+        match /messages/{msgId} {
+          allow read, create: if isSignedIn() && request.resource.data.uid == request.auth.uid; // only senders write
+        }
+      }
+    }
+  }
+
+  Notes:
+  - Direct Messages are E2EE: Firestore stores only ciphertext + IV. AES keys are stored encrypted for each participant with their RSA public key.
+  - Rooms are public (not E2EE) in this version for simplicity. E2EE rooms require group key management and membership logic.
+  ======================================================================================
+  -->
+
+</body>
+</html>
