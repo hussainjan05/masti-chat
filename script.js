@@ -1,611 +1,601 @@
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-    import { getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously, onAuthStateChanged, updateProfile, signOut as fbSignOut } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
-    import { getFirestore, collection, addDoc, serverTimestamp, query, orderBy, limit, onSnapshot, doc, setDoc, getDoc, getDocs, updateDoc, arrayUnion, arrayRemove } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import {
+  getAuth, GoogleAuthProvider, signInWithPopup, signInAnonymously,
+  onAuthStateChanged, updateProfile, signOut as fbSignOut
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import {
+  getFirestore, collection, addDoc, serverTimestamp, query, orderBy,
+  limit, onSnapshot, doc, setDoc, getDoc, getDocs, updateDoc,
+  arrayUnion, arrayRemove
+} from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
-    /* =====================
-       1) CONFIG
-       ===================== */
-   
-    const firebaseConfig = {
-      apiKey: "AIzaSyBgLv_euy0hiLS7hPUvh6J9xw1kQQwJ88A",
-      authDomain: "chat-app-84f22.firebaseapp.com",
-      projectId: "chat-app-84f22",
-      storageBucket: "chat-app-84f22.firebasestorage.app",
-      messagingSenderId: "290340899268",
-      appId: "1:290340899268:web:92a8aad0aef221506ebc91"
-    };
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app);
+/* =====================
+   1) CONFIG
+   ===================== */
+const firebaseConfig = {
+  apiKey: "AIzaSyBgLv_euy0hiLS7hPUvh6J9xw1kQQwJ88A",
+  authDomain: "chat-app-84f22.firebaseapp.com",
+  projectId: "chat-app-84f22",
+  storageBucket: "chat-app-84f22.firebasestorage.app",
+  messagingSenderId: "290340899268",
+  appId: "1:290340899268:web:92a8aad0aef221506ebc91"
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
 
-    /* =====================
-       2) THEME TOGGLE
-       ===================== */
-    const d = document.documentElement;
-    const themeToggle = document.getElementById('themeToggle');
-    const themeToggleAuth = document.getElementById('themeToggleAuth');
-    const applyTheme = (t)=>{ d.setAttribute('data-theme', t); localStorage.setItem('masti-theme', t); };
-    const savedTheme = localStorage.getItem('masti-theme') || 'dark';
-    applyTheme(savedTheme);
-    [themeToggle, themeToggleAuth].forEach(btn=> btn?.addEventListener('click', ()=> applyTheme(d.getAttribute('data-theme')==='dark'?'light':'dark')));
+/* =====================
+   2) THEME TOGGLE
+   ===================== */
+const d = document.documentElement;
+const themeToggle = document.getElementById('themeToggle');
+const themeToggleAuth = document.getElementById('themeToggleAuth');
+const applyTheme = (t)=>{ d.setAttribute('data-theme', t); localStorage.setItem('masti-theme', t); };
+const savedTheme = localStorage.getItem('masti-theme') || 'dark';
+applyTheme(savedTheme);
+[themeToggle, themeToggleAuth].forEach(btn=> btn?.addEventListener('click', ()=> applyTheme(d.getAttribute('data-theme')==='dark'?'light':'dark')));
 
-    /* =====================
-       3) DOM REFS
-       ===================== */
-    const $ = (id)=>document.getElementById(id);
-    const authView = $('auth');
-    const appView = $('app');
-    const meNameEl = $('meName');
-    const mePhotoEl = $('mePhoto');
-    const userListEl = $('userList');
-    const roomListEl = $('roomList');
-    const roomCountEl = $('roomCount');
-    const msgInput = $('msgInput');
-    const messagesEl = $('messages');
-    const chatTitle = $('chatTitle');
-    const chatSubtitle = $('chatSubtitle');
-    const hamburger = $('hamburger');
-    const sidebar = $('sidebar');
-    const sidebarOverlay = $('sidebarOverlay');
-    const debugInfo = $('debugInfo');
+/* =====================
+   3) DOM REFS
+   ===================== */
+const $ = (id)=>document.getElementById(id);
+const authView = $('auth');
+const appView = $('app');
+const meNameEl = $('meName');
+const mePhotoEl = $('mePhoto');
+const userListEl = $('userList');
+const roomListEl = $('roomList');
+const roomCountEl = $('roomCount');
+const msgInput = $('msgInput');
+const messagesEl = $('messages');
+const chatTitle = $('chatTitle');
+const chatSubtitle = $('chatSubtitle');
+const hamburger = $('hamburger');
+const sidebar = $('sidebar');
+const sidebarOverlay = $('sidebarOverlay');
+const debugInfo = $('debugInfo');
 
-    let currentMode = null; // 'dm' or 'room'
-    let currentPeer = null; // user object for DM
-    let currentRoomId = null; // string for room
-    let unsub = null;
-    let unsubUsers = null;
-    let unsubRooms = null;
-    let messageCounts = {}; // Track unread messages
+let currentMode = null;      // 'dm' | 'room' | null
+let currentPeer = null;      // user object for DM
+let currentRoomId = null;    // string for room
+let unsub = null;
+let unsubUsers = null;
+let unsubRooms = null;
+let messageCounts = {};      // unread counts per user
+let messageCache = [];       // incremental render cache for current thread
 
-    /* =====================
-       4) HAMBURGER MENU TOGGLE
-       ===================== */
-    function toggleSidebar() {
-      sidebar.classList.toggle('show');
-      hamburger.classList.toggle('active');
-      sidebarOverlay.classList.toggle('active');
-    }
-    
-    hamburger.addEventListener('click', toggleSidebar);
-    sidebarOverlay.addEventListener('click', toggleSidebar);
-    
-    // Close sidebar when a chat is selected (on mobile)
-    function closeSidebarOnMobile() {
-      if (window.innerWidth <= 960) {
-        toggleSidebar();
-      }
-    }
+/* =====================
+   4) HAMBURGER MENU
+   ===================== */
+function toggleSidebar(force) {
+  const willShow = typeof force === 'boolean' ? force : !sidebar.classList.contains('show');
+  sidebar.classList.toggle('show', willShow);
+  hamburger.classList.toggle('active', willShow);
+  sidebarOverlay.classList.toggle('active', willShow);
+}
+hamburger?.addEventListener('click', ()=>toggleSidebar());
+sidebarOverlay?.addEventListener('click', ()=>toggleSidebar(false));
+function closeSidebarOnMobile() {
+  if (window.innerWidth <= 960) toggleSidebar(false);
+}
 
-    /* =====================
-       5) AUTH
-       ===================== */
-    $('googleBtn').addEventListener('click', async ()=>{
-      try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch(e){ alert(e.message); }
-    });
-    $('guestBtn').addEventListener('click', async ()=>{
-      const cred = await signInAnonymously(auth);
-      await updateProfile(cred.user, { displayName: 'Guest-'+cred.user.uid.slice(0,5) });
-    });
-    $('signOut').addEventListener('click', ()=> fbSignOut(auth));
+/* =====================
+   5) AUTH
+   ===================== */
+$('googleBtn')?.addEventListener('click', async ()=>{
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); } catch(e){ alert(e.message); }
+});
+$('guestBtn')?.addEventListener('click', async ()=>{
+  const cred = await signInAnonymously(auth);
+  await updateProfile(cred.user, { displayName: 'Guest-'+cred.user.uid.slice(0,5) });
+});
+$('signOut')?.addEventListener('click', ()=> fbSignOut(auth));
 
-    onAuthStateChanged(auth, async user => {
-      if (user) {
-        authView.style.display='none'; appView.style.display='grid';
-        meNameEl.textContent = user.displayName||'Unknown';
-        if (user.photoURL) { mePhotoEl.src = user.photoURL; mePhotoEl.style.display='block'; }
-        await upsertUser(user);
-        await ensureDefaultRooms();
-        loadUsers();
-        loadRooms();
-        // default view
-        setWelcome();
-        // prepare E2EE keys
-        await ensureKeypair();
-      } else {
-        authView.style.display='grid'; appView.style.display='none';
-        cleanupListener();
-      }
-    });
+onAuthStateChanged(auth, async user => {
+  if (user) {
+    authView.style.display='none'; appView.style.display='grid';
 
-    async function upsertUser(u){
-      await setDoc(doc(db,'users',u.uid),{
-        uid:u.uid, name:u.displayName||'Unknown', email:u.email||'', photoURL:u.photoURL||'',
-        publicKeyPem: (await getStoredPublicKeyPem())||null, // may be null until generated
-        updatedAt: serverTimestamp()
-      },{merge:true});
-    }
+    // 1) Ensure E2EE keypair FIRST so your public key is available
+    await ensureKeypair();
 
-    /* =====================
-       6) USERS & ROOMS LISTS
-       ===================== */
-    async function loadUsers(){
-      if (unsubUsers) unsubUsers();
-      
-      userListEl.innerHTML = '';
-      const q = query(collection(db, 'users'));
-      unsubUsers = onSnapshot(q, (snap) => {
-        userListEl.innerHTML = '';
-        const myId = auth.currentUser.uid;
-        
-        snap.forEach(docu => {
-          const u = docu.data(); 
-          if (u.uid === myId) return;
-          
-          const div = document.createElement('div');
-          div.className = 'item';
-          div.dataset.uid = u.uid;
-          
-          // Add unread badge if there are unread messages
-          const unreadCount = messageCounts[u.uid] || 0;
-          const badge = unreadCount > 0 ? `<div class="unread-badge">${unreadCount}</div>` : '';
-          
-          div.innerHTML = `
-            <img class="avatar" src="${u.photoURL||''}" alt=""/>
-            <div>
-              <div><strong>${escapeHTML(u.name||'User')}</strong></div>
-              <div class="muted">${u.email||''}</div>
-            </div>
-            ${badge}
-          `;
-          
-          div.addEventListener('click', () => { 
-            openDM(u); 
-            closeSidebarOnMobile();
-            // Reset unread count when opening chat
-            messageCounts[u.uid] = 0;
-            updateUserBadge(u.uid);
-          });
-          
-          userListEl.appendChild(div);
-        });
-      });
-    }
+    // 2) Upsert user profile (now includes publicKeyPem)
+    await upsertUser(user);
 
-    function updateUserBadge(uid) {
-      const userElement = userListEl.querySelector(`[data-uid="${uid}"]`);
-      if (userElement) {
-        const badge = userElement.querySelector('.unread-badge');
-        const unreadCount = messageCounts[uid] || 0;
-        
-        if (unreadCount > 0) {
-          if (!badge) {
-            const badgeEl = document.createElement('div');
-            badgeEl.className = 'unread-badge';
-            badgeEl.textContent = unreadCount;
-            userElement.appendChild(badgeEl);
-          } else {
-            badge.textContent = unreadCount;
-          }
-        } else if (badge) {
-          badge.remove();
-        }
-      }
-    }
+    meNameEl.textContent = user.displayName||'Unknown';
+    if (user.photoURL) { mePhotoEl.src = user.photoURL; mePhotoEl.style.display='block'; }
 
-    async function ensureDefaultRooms(){
-      const defaults = [{id:'general',name:'General'},{id:'saylani',name:'Saylani Class'}];
-      for (const r of defaults){
-        const ref = doc(db,'rooms',r.id); const s=await getDoc(ref); if(!s.exists()) await setDoc(ref,{name:r.name,createdAt:serverTimestamp()});
-      }
-    }
-    
-    $('roomGo').addEventListener('click', async ()=>{
-      const val = $('roomInput').value.trim(); if(!val) return;
-      const id = val.toLowerCase().replace(/[^a-z0-9_-]+/g,'-');
-      await setDoc(doc(db,'rooms',id),{name:val,createdAt:serverTimestamp()},{merge:true});
-      $('roomInput').value='';
-      loadRooms();
-      openRoom(id,val);
-      closeSidebarOnMobile();
-    });
-    
-    async function loadRooms(){
-      if (unsubRooms) unsubRooms();
-      
-      roomListEl.innerHTML=''; 
-      let count=0;
-      const q = query(collection(db, 'rooms'));
-      unsubRooms = onSnapshot(q, (snap) => {
-        roomListEl.innerHTML = '';
-        count = 0;
-        
-        snap.forEach(d => { 
-          count++; 
-          const r = d.data(); 
-          const div = document.createElement('div');
-          div.className = 'item';
-          div.innerHTML = `
-            <div>
-              <strong>${escapeHTML(r.name||d.id)}</strong>
-              <div class="muted">${d.id}</div>
-            </div>
-          `;
-          div.addEventListener('click', () => { 
-            openRoom(d.id, r.name); 
-            closeSidebarOnMobile(); 
-          }); 
-          roomListEl.appendChild(div);
-        });
-        
-        roomCountEl.textContent = count + '';
-      });
-    }
+    await ensureDefaultRooms();
+    loadUsers();
+    loadRooms();
+    setWelcome();
+  } else {
+    authView.style.display='grid'; appView.style.display='none';
+    cleanupListener();
+  }
+});
 
-    /* =====================
-       7) OPEN VIEWS
-       ===================== */
-    function setWelcome(){ 
-      currentMode=null; 
-      chatTitle.textContent='Welcome 👋'; 
-      chatSubtitle.textContent='Select a user to DM (E2EE) or a room to chat'; 
-      messagesEl.innerHTML=''; 
-    }
+async function upsertUser(u){
+  await setDoc(doc(db,'users',u.uid),{
+    uid:u.uid, name:u.displayName||'Unknown', email:u.email||'', photoURL:u.photoURL||'',
+    publicKeyPem: (await getStoredPublicKeyPem())||null,
+    updatedAt: serverTimestamp()
+  },{merge:true});
+}
 
-    async function openDM(peer){
-      currentMode='dm'; 
-      currentPeer=peer; 
-      currentRoomId=null; 
-      messagesEl.innerHTML='';
-      chatTitle.textContent = `DM • ${peer.name}`; 
-      chatSubtitle.textContent = 'End‑to‑end encrypted';
-      
-      // Reset unread count when opening the chat
-      messageCounts[peer.uid] = 0;
-      updateUserBadge(peer.uid);
-      
-      await ensureConversationWith(peer.uid); // create key if missing
-      listenDM(peer.uid);
-    }
+/* =====================
+   6) USERS & ROOMS LISTS
+   ===================== */
+async function loadUsers(){
+  if (unsubUsers) unsubUsers();
+  userListEl.innerHTML = '';
 
-    async function openRoom(id,name){
-      currentMode='room'; 
-      currentPeer=null; 
-      currentRoomId=id; 
-      messagesEl.innerHTML='';
-      chatTitle.textContent = name||id; 
-      chatSubtitle.textContent = 'Public room (not E2EE)';
-      listenRoom(id);
-    }
+  const q = query(collection(db, 'users'));
+  unsubUsers = onSnapshot(q, (snap) => {
+    userListEl.innerHTML = '';
+    const myId = auth.currentUser.uid;
 
-    /* =====================
-       8) FIRESTORE LISTENERS
-       ===================== */
-    function cleanupListener(){ if(typeof unsub==='function'){ unsub(); unsub=null; } }
+    snap.forEach(docu => {
+      const u = docu.data();
+      if (u.uid === myId) return;
 
-    function convId(a,b){ return [a,b].sort().join('_'); }
-
-    function listenRoom(roomId){
-      cleanupListener();
-      const ref = collection(db,'rooms',roomId,'messages');
-      const qy = query(ref, orderBy('createdAt','asc'), limit(300));
-      unsub = onSnapshot(qy, snap=>{ 
-        messagesEl.innerHTML=''; 
-        snap.forEach(d=> renderMessage(d.data())); 
-        messagesEl.scrollTop = messagesEl.scrollHeight; 
-      });
-    }
-
-    async function listenDM(peerUid){
-      cleanupListener();
-      const cid = convId(auth.currentUser.uid, peerUid);
-      const ref = collection(db,'conversations',cid,'messages');
-      const qy = query(ref, orderBy('createdAt','asc'), limit(300));
-      
-      unsub = onSnapshot(qy, async snap => {
-        messagesEl.innerHTML = '';
-        
-        for (const d of snap.docs) { 
-          const m = d.data(); 
-          let text = '';
-          
-          if (m.e2ee) {
-            try {
-              // FIX: Use the correct conversation ID for decryption
-              const {aesKey} = await loadConversationKey(cid);
-              text = await aesDecryptText(aesKey, m.cipher, m.iv);
-            } catch(e) {
-              console.error("Decryption error:", e);
-              text = '[cannot decrypt]';
-            }
-          } else {
-            text = m.text || '';
-          }
-          
-          renderMessage({...m, text}); 
-        }
-        
-        messagesEl.scrollTop = messagesEl.scrollHeight;
-        
-        // Update debug info
-        debugInfo.textContent = `DM with ${currentPeer.name}, CID: ${cid}, Messages: ${snap.size}`;
-      }, (error) => {
-        console.error("Listener error:", error);
-        debugInfo.textContent = `Error: ${error.message}`;
-      });
-    }
-
-    /* =====================
-       9) SENDING MESSAGES
-       ===================== */
-    document.getElementById('composer').addEventListener('submit', async (e)=>{
-      e.preventDefault(); 
-      const text = msgInput.value.trim(); 
-      if(!text) return; 
-      msgInput.value='';
-      
-      if(currentMode==='room'){ 
-        await sendRoom(text); 
-      } else if(currentMode==='dm'){ 
-        await sendDM(text); 
-      } else { 
-        alert('Select a chat first'); 
-      }
-    });
-
-    async function sendRoom(text){
-      const ref = collection(db,'rooms',currentRoomId,'messages');
-      await addDoc(ref,{ 
-        text, 
-        uid:auth.currentUser.uid, 
-        name:auth.currentUser.displayName||'Unknown', 
-        photoURL:auth.currentUser.photoURL||'', 
-        createdAt:serverTimestamp() 
-      });
-    }
-
-    async function sendDM(plaintext){
-      const my = auth.currentUser; 
-      const peer = currentPeer; 
-      if(!peer) return;
-      
-      const cid = convId(my.uid, peer.uid);
-      const convRef = doc(db,'conversations',cid);
-      const convSnap = await getDoc(convRef);
-      
-      if(!convSnap.exists()){ 
-        await ensureConversationWith(peer.uid); 
-      }
-      
-      try {
-        const {aesKey} = await loadConversationKey(cid);
-        const {cipherB64, ivB64} = await aesEncryptText(aesKey, plaintext);
-        const ref = collection(db,'conversations',cid,'messages');
-        
-        await addDoc(ref,{ 
-          cipher: cipherB64, 
-          iv: ivB64, 
-          e2ee: true, 
-          uid: my.uid, 
-          name: my.displayName||'Unknown', 
-          createdAt: serverTimestamp() 
-        });
-        
-        // Update unread count for the recipient
-        await updateDoc(doc(db, 'users', peer.uid), {
-          unreadMessages: arrayUnion(cid)
-        });
-        
-      } catch(error) {
-        console.error("Error sending DM:", error);
-        alert("Failed to send encrypted message: " + error.message);
-      }
-    }
-
-    function renderMessage(m){
-      const isMe = auth.currentUser && m.uid === auth.currentUser.uid;
       const div = document.createElement('div');
-      div.className = 'msg ' + (isMe ? 'me' : 'you');
-      const when = m.createdAt?.toDate ? m.createdAt.toDate() : new Date();
-      const hh = when.getHours().toString().padStart(2,'0');
-      const mm = when.getMinutes().toString().padStart(2,'0');
-      const text = escapeHTML(m.text || '');
-      div.innerHTML = `<div>${text}</div><div class="meta">${isMe?'You':escapeHTML(m.name||'User')} • ${hh}:${mm}</div>`;
-      messagesEl.appendChild(div);
-    }
+      div.className = 'item';
+      div.dataset.uid = u.uid;
 
-    /* =====================
-       10) E2EE KEYS & HELPERS (DM only)
-       - Each user has RSA-OAEP keypair (private stays local, public in Firestore)
-       - Each conversation has a random AES-GCM key, stored encrypted for both users
-       ===================== */
-    async function ensureKeypair(){
-      // already have?
-      const priv = localStorage.getItem('masti-priv'); 
-      const pub = localStorage.getItem('masti-pub');
-      if(priv && pub){ return; }
-      
-      try {
-        const kp = await crypto.subtle.generateKey(
-          {name:'RSA-OAEP', modulusLength:2048, publicExponent:new Uint8Array([1,0,1]), hash:'SHA-256'}, 
-          true, 
-          ['encrypt','decrypt']
-        );
-        
-        const spub = await crypto.subtle.exportKey('spki', kp.publicKey); 
-        const spriv = await crypto.subtle.exportKey('pkcs8', kp.privateKey);
-        const pubPem = spkiToPem(spub); 
-        const privPem = pkcs8ToPem(spriv);
-        
-        localStorage.setItem('masti-pub', pubPem); 
-        localStorage.setItem('masti-priv', privPem);
-        
-        // update Firestore user public key
-        await setDoc(doc(db,'users',auth.currentUser.uid),{ publicKeyPem: pubPem },{merge:true});
-      } catch(error) {
-        console.error("Key generation error:", error);
-      }
-    }
-    
-    async function getStoredPublicKeyPem(){ 
-      return localStorage.getItem('masti-pub') || null; 
-    }
-    
-    async function getPrivateKey(){ 
-      const pem = localStorage.getItem('masti-priv'); 
-      return pem ? importPrivateKey(pem) : null; 
-    }
-    
-    async function getPublicKey(uid){
-      try {
-        const s = await getDoc(doc(db,'users',uid)); 
-        const pem = s.data()?.publicKeyPem; 
-        return pem ? importPublicKey(pem) : null;
-      } catch(error) {
-        console.error("Error getting public key:", error);
-        return null;
-      }
-    }
+      const unreadCount = messageCounts[u.uid] || 0;
+      const badge = unreadCount > 0 ? `<div class="unread-badge">${unreadCount}</div>` : '';
 
-    async function ensureConversationWith(peerUid){
-      const cid = convId(auth.currentUser.uid, peerUid);
-      const ref = doc(db,'conversations',cid); 
-      const snap = await getDoc(ref);
-      
-      if(snap.exists()){ return; }
-      
-      // create new AES key and encrypt for both users
-      try {
-        const aesKey = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
-        const raw = await crypto.subtle.exportKey('raw', aesKey);
-        
-        const myPub = await getPublicKey(auth.currentUser.uid) || await importPublicKey(localStorage.getItem('masti-pub'));
-        const peerPub = await getPublicKey(peerUid);
-        
-        if(!peerPub) { 
-          alert('Peer has no public key yet (they must sign in once).'); 
-          return; 
-        }
-        
-        const encMine = await rsaEncrypt(myPub, new Uint8Array(raw));
-        const encPeer = await rsaEncrypt(peerPub, new Uint8Array(raw));
-        
-        await setDoc(ref, { 
-          createdAt: serverTimestamp(), 
-          keys: { 
-            [auth.currentUser.uid]: encMine, 
-            [peerUid]: encPeer 
-          } 
-        });
-      } catch(error) {
-        console.error("Error creating conversation:", error);
-      }
-    }
+      div.innerHTML = `
+        <img class="avatar" src="${u.photoURL||''}" alt=""/>
+        <div>
+          <div><strong>${escapeHTML(u.name||'User')}</strong></div>
+          <div class="muted">${u.email||''}</div>
+        </div>
+        ${badge}
+      `;
 
-    async function loadConversationKey(cid){
-      try {
-        const ref = doc(db,'conversations',cid); 
-        const snap = await getDoc(ref); 
-        const data = snap.data();
-        
-        if (!data || !data.keys) {
-          throw new Error('No keys found in conversation');
-        }
-        
-        const blobB64 = data.keys[auth.currentUser.uid]; 
-        if(!blobB64) throw new Error('No key for you in this conversation.');
-        
-        const priv = await getPrivateKey();
-        if (!priv) {
-          throw new Error('No private key available');
-        }
-        
-        const raw = await rsaDecrypt(priv, b64ToBytes(blobB64));
-        const key = await crypto.subtle.importKey('raw', raw, {name:'AES-GCM'}, false, ['encrypt','decrypt']);
-        
-        return { aesKey: key };
-      } catch(error) {
-        console.error("Error loading conversation key:", error);
-        throw error;
-      }
-    }
+      div.addEventListener('click', async () => {
+        await openDM(u);
+        closeSidebarOnMobile();
+        // Clear unread for this peer on open
+        await clearUnreadFor(u.uid);
+      });
 
-    // --- Crypto helpers ---
-    function spkiToPem(buf){ 
-      const b = btoa(String.fromCharCode(...new Uint8Array(buf))); 
-      return `-----BEGIN PUBLIC KEY-----\n${b.match(/.{1,64}/g).join('\n')}\n-----END PUBLIC KEY-----`; 
-    }
-    
-    function pkcs8ToPem(buf){ 
-      const b = btoa(String.fromCharCode(...new Uint8Array(buf))); 
-      return `-----BEGIN PRIVATE KEY-----\n${b.match(/.{1,64}/g).join('\n')}\n-----END PRIVATE KEY-----`; 
-    }
-    
-    async function importPublicKey(pem){ 
-      const b64 = pem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g,'').replace(/\s+/g,''); 
-      const der = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); 
-      return crypto.subtle.importKey('spki', der, {name:'RSA-OAEP', hash:'SHA-256'}, true, ['encrypt']); 
-    }
-    
-    async function importPrivateKey(pem){ 
-      const b64 = pem.replace(/-----(BEGIN|END) PRIVATE KEY-----/g,'').replace(/\s+/g,''); 
-      const der = Uint8Array.from(atob(b64), c => c.charCodeAt(0)); 
-      return crypto.subtle.importKey('pkcs8', der, {name:'RSA-OAEP', hash:'SHA-256'}, false, ['decrypt']); 
-    }
-    
-    async function rsaEncrypt(pub, bytes){ 
-      const enc = await crypto.subtle.encrypt({name:'RSA-OAEP'}, pub, bytes); 
-      return bytesToB64(new Uint8Array(enc)); 
-    }
-    
-    async function rsaDecrypt(priv, bytes){ 
-      const dec = await crypto.subtle.decrypt({name:'RSA-OAEP'}, priv, bytes); 
-      return new Uint8Array(dec); 
-    }
-
-    async function aesEncryptText(key, text){ 
-      const iv = crypto.getRandomValues(new Uint8Array(12)); 
-      const enc = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, new TextEncoder().encode(text)); 
-      return {cipherB64: bytesToB64(new Uint8Array(enc)), ivB64: bytesToB64(iv)};
-    }
-    
-    async function aesDecryptText(key, cipherB64, ivB64){ 
-      const iv = b64ToBytes(ivB64); 
-      const data = b64ToBytes(cipherB64); 
-      const dec = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, data); 
-      return new TextDecoder().decode(dec); 
-    }
-
-    function bytesToB64(bytes){ 
-      let bin = ''; 
-      bytes.forEach(b => bin += String.fromCharCode(b)); 
-      return btoa(bin); 
-    }
-    
-    function b64ToBytes(b64){ 
-      const bin = atob(b64); 
-      const out = new Uint8Array(bin.length); 
-      for(let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); 
-      return out; 
-    }
-
-    /* =====================
-       11) UTILS
-       ===================== */
-    function escapeHTML(str){ 
-      return (str||'').replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c])); 
-    }
-
-    // Listen for new messages when not in the chat to update badges
-    onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        // Set up a listener for unread messages
-        const userRef = doc(db, 'users', user.uid);
-        onSnapshot(userRef, (doc) => {
-          if (doc.exists()) {
-            const data = doc.data();
-            const unread = data.unreadMessages || [];
-            
-            // Update message counts for all conversations
-            unread.forEach(cid => {
-              const parts = cid.split('_');
-              const otherUserId = parts[0] === user.uid ? parts[1] : parts[0];
-              
-              if (otherUserId !== user.uid) {
-                messageCounts[otherUserId] = (messageCounts[otherUserId] || 0) + 1;
-                updateUserBadge(otherUserId);
-              }
-            });
-          }
-        });
-      }
+      userListEl.appendChild(div);
     });
+  });
+}
+
+function updateUserBadge(uid) {
+  const userElement = userListEl.querySelector(`[data-uid="${uid}"]`);
+  if (userElement) {
+    const badge = userElement.querySelector('.unread-badge');
+    const unreadCount = messageCounts[uid] || 0;
+    if (unreadCount > 0) {
+      if (!badge) {
+        const badgeEl = document.createElement('div');
+        badgeEl.className = 'unread-badge';
+        badgeEl.textContent = unreadCount;
+        userElement.appendChild(badgeEl);
+      } else {
+        badge.textContent = unreadCount;
+      }
+    } else if (badge) {
+      badge.remove();
+    }
+  }
+}
+
+async function ensureDefaultRooms(){
+  const defaults = [{id:'general',name:'General'},{id:'saylani',name:'Saylani Class'}];
+  for (const r of defaults){
+    const ref = doc(db,'rooms',r.id);
+    const s = await getDoc(ref);
+    if(!s.exists()) await setDoc(ref,{name:r.name,createdAt:serverTimestamp()});
+  }
+}
+
+$('roomGo')?.addEventListener('click', async ()=>{
+  const val = $('roomInput').value.trim(); if(!val) return;
+  const id = val.toLowerCase().replace(/[^a-z0-9_-]+/g,'-');
+  await setDoc(doc(db,'rooms',id),{name:val,createdAt:serverTimestamp()},{merge:true});
+  $('roomInput').value='';
+  loadRooms();
+  openRoom(id,val);
+  closeSidebarOnMobile();
+});
+
+async function loadRooms(){
+  if (unsubRooms) unsubRooms();
+  roomListEl.innerHTML='';
+
+  const q = query(collection(db, 'rooms'));
+  unsubRooms = onSnapshot(q, (snap) => {
+    roomListEl.innerHTML = '';
+    let count = 0;
+    snap.forEach(d => {
+      count++;
+      const r = d.data();
+      const div = document.createElement('div');
+      div.className = 'item';
+      div.innerHTML = `
+        <div>
+          <strong>${escapeHTML(r.name||d.id)}</strong>
+          <div class="muted">${d.id}</div>
+        </div>
+      `;
+      div.addEventListener('click', () => { openRoom(d.id, r.name); closeSidebarOnMobile(); });
+      roomListEl.appendChild(div);
+    });
+    roomCountEl.textContent = String(count);
+  });
+}
+
+/* =====================
+   7) OPEN VIEWS
+   ===================== */
+function setWelcome(){
+  currentMode=null;
+  currentPeer=null;
+  currentRoomId=null;
+  messageCache = [];
+  messagesEl.innerHTML='';
+  chatTitle.textContent='Welcome 👋';
+  chatSubtitle.textContent='Select a user to DM (E2EE) or a room to chat';
+}
+
+async function openDM(peer){
+  currentMode='dm';
+  currentPeer=peer;
+  currentRoomId=null;
+  messageCache = [];
+  messagesEl.innerHTML='';
+  chatTitle.textContent = `DM • ${peer.name}`;
+  chatSubtitle.textContent = 'End-to-end encrypted';
+
+  // Ensure conversation (keys) exists before listening
+  await ensureConversationWith(peer.uid);
+  await listenDM(peer.uid);
+
+  // Clear unread badge in UI + Firestore
+  await clearUnreadFor(peer.uid);
+}
+
+async function openRoom(id,name){
+  currentMode='room';
+  currentPeer=null;
+  currentRoomId=id;
+  messageCache = [];
+  messagesEl.innerHTML='';
+  chatTitle.textContent = name||id;
+  chatSubtitle.textContent = 'Public room (not E2EE)';
+  listenRoom(id);
+}
+
+/* =====================
+   8) FIRESTORE LISTENERS
+   ===================== */
+function cleanupListener(){ if(typeof unsub==='function'){ unsub(); unsub=null; } }
+function convId(a,b){ return [a,b].sort().join('_'); }
+
+function listenRoom(roomId){
+  cleanupListener();
+  const ref = collection(db,'rooms',roomId,'messages');
+  const qy = query(ref, orderBy('createdAt','asc'), limit(300));
+  unsub = onSnapshot(qy, snap=>{
+    messageCache = [];
+    messagesEl.innerHTML='';
+    snap.forEach(d=> {
+      const m = d.data();
+      messageCache.push({ ...m, text: m.text || '' });
+    });
+    redrawMessages();
+  });
+}
+
+async function listenDM(peerUid){
+  cleanupListener();
+  const cid = convId(auth.currentUser.uid, peerUid);
+  const ref = collection(db,'conversations',cid,'messages');
+
+  // Order by server ts, then stable local fallback
+  const qy = query(ref, orderBy('createdAt','asc'), orderBy('createdAtClient','asc'), limit(300));
+
+  unsub = onSnapshot(qy, async (snap) => {
+    // Build new cache incrementally
+    const next = [];
+    for (const d of snap.docs) {
+      const m = d.data();
+      let text = '';
+      if (m.e2ee) {
+        try {
+          const { aesKey } = await loadConversationKey(cid);
+          text = await aesDecryptText(aesKey, m.cipher, m.iv);
+        } catch(e) {
+          console.error('Decryption error:', e);
+          text = '[cannot decrypt]';
+        }
+      } else {
+        text = m.text || '';
+      }
+      next.push({ ...m, text });
+    }
+    messageCache = next;
+    redrawMessages();
+    debugInfo && (debugInfo.textContent = `DM with ${currentPeer?.name||''}, CID: ${cid}, Messages: ${snap.size}`);
+  }, (error) => {
+    console.error("Listener error:", error);
+    debugInfo && (debugInfo.textContent = `Error: ${error.message}`);
+  });
+}
+
+/* =====================
+   9) SENDING MESSAGES
+   ===================== */
+document.getElementById('composer')?.addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const text = msgInput.value.trim();
+  if(!text) return;
+  msgInput.value='';
+
+  if(currentMode==='room'){
+    await sendRoom(text);
+  } else if(currentMode==='dm'){
+    await sendDM(text);
+  } else {
+    alert('Select a chat first');
+  }
+});
+
+async function sendRoom(text){
+  const ref = collection(db,'rooms',currentRoomId,'messages');
+  await addDoc(ref,{
+    text,
+    uid:auth.currentUser.uid,
+    name:auth.currentUser.displayName||'Unknown',
+    photoURL:auth.currentUser.photoURL||'',
+    createdAt: serverTimestamp(),
+    createdAtClient: Date.now()   // fallback for ordering
+  });
+}
+
+async function sendDM(plaintext){
+  const my = auth.currentUser;
+  const peer = currentPeer;
+  if(!peer) return;
+
+  const cid = convId(my.uid, peer.uid);
+  const convRef = doc(db,'conversations',cid);
+  const convSnap = await getDoc(convRef);
+
+  if(!convSnap.exists()){
+    await ensureConversationWith(peer.uid);
+  }
+
+  try {
+    const { aesKey } = await loadConversationKey(cid);
+    const { cipherB64, ivB64 } = await aesEncryptText(aesKey, plaintext);
+    const ref = collection(db,'conversations',cid,'messages');
+
+    // Add message (encrypted)
+    await addDoc(ref,{
+      cipher: cipherB64,
+      iv: ivB64,
+      e2ee: true,
+      uid: my.uid,
+      name: my.displayName||'Unknown',
+      createdAt: serverTimestamp(),
+      createdAtClient: Date.now()   // fallback for ordering to avoid flicker/disappear
+    });
+
+    // Mark unread for recipient
+    await updateDoc(doc(db, 'users', peer.uid), { unreadMessages: arrayUnion(cid) });
+
+  } catch(error) {
+    console.error("Error sending DM:", error);
+    alert("Failed to send encrypted message: " + error.message);
+  }
+}
+
+/* =====================
+   10) RENDERING
+   ===================== */
+function redrawMessages(){
+  // Full redraw from cache (simple + reliable)
+  messagesEl.innerHTML = '';
+  for (const m of messageCache) {
+    const isMe = auth.currentUser && m.uid === auth.currentUser.uid;
+    const div = document.createElement('div');
+    div.className = 'msg ' + (isMe ? 'me' : 'you');
+    const when = m.createdAt?.toDate ? m.createdAt.toDate() : (m.createdAt ? m.createdAt : new Date());
+    const date = when instanceof Date ? when : new Date(when);
+    const hh = date.getHours().toString().padStart(2,'0');
+    const mm = date.getMinutes().toString().padStart(2,'0');
+    div.innerHTML = `
+      <div>${escapeHTML(m.text || '')}</div>
+      <div class="meta">${isMe ? 'You' : escapeHTML(m.name||'User')} • ${hh}:${mm}</div>
+    `;
+    messagesEl.appendChild(div);
+  }
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+/* =====================
+   11) E2EE KEYS & HELPERS
+   ===================== */
+async function ensureKeypair(){
+  const priv = localStorage.getItem('masti-priv');
+  const pub = localStorage.getItem('masti-pub');
+  if (priv && pub) return;
+
+  const kp = await crypto.subtle.generateKey(
+    {name:'RSA-OAEP', modulusLength:2048, publicExponent:new Uint8Array([1,0,1]), hash:'SHA-256'},
+    true,
+    ['encrypt','decrypt']
+  );
+  const spub = await crypto.subtle.exportKey('spki', kp.publicKey);
+  const spriv = await crypto.subtle.exportKey('pkcs8', kp.privateKey);
+  const pubPem = spkiToPem(spub);
+  const privPem = pkcs8ToPem(spriv);
+
+  localStorage.setItem('masti-pub', pubPem);
+  localStorage.setItem('masti-priv', privPem);
+
+  // publish immediately so others can start E2EE with you
+  if (auth.currentUser?.uid) {
+    await setDoc(doc(db,'users',auth.currentUser.uid),{ publicKeyPem: pubPem },{merge:true});
+  }
+}
+
+async function getStoredPublicKeyPem(){ return localStorage.getItem('masti-pub') || null; }
+async function getPrivateKey(){
+  const pem = localStorage.getItem('masti-priv');
+  return pem ? importPrivateKey(pem) : null;
+}
+async function getPublicKey(uid){
+  const s = await getDoc(doc(db,'users',uid));
+  const pem = s.data()?.publicKeyPem;
+  return pem ? importPublicKey(pem) : null;
+}
+
+async function ensureConversationWith(peerUid){
+  const cid = convId(auth.currentUser.uid, peerUid);
+  const ref = doc(db,'conversations',cid);
+  const snap = await getDoc(ref);
+  if (snap.exists()) return;
+
+  // create new AES key and encrypt for both users
+  const aesKey = await crypto.subtle.generateKey({name:'AES-GCM', length:256}, true, ['encrypt','decrypt']);
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', aesKey));
+
+  // Get both public keys
+  // My public key (prefer local, fallback Firestore)
+  const myPem = localStorage.getItem('masti-pub');
+  const myPub = myPem ? await importPublicKey(myPem) : await getPublicKey(auth.currentUser.uid);
+  const peerPub = await getPublicKey(peerUid);
+
+  if (!myPub) throw new Error('Your public key is missing');
+  if (!peerPub) throw new Error('Peer has no public key yet (they must sign in once)');
+
+  const encMine = await rsaEncrypt(myPub, raw);
+  const encPeer = await rsaEncrypt(peerPub, raw);
+
+  await setDoc(ref, {
+    createdAt: serverTimestamp(),
+    keys: {
+      [auth.currentUser.uid]: encMine,
+      [peerUid]: encPeer
+    }
+  });
+}
+
+async function loadConversationKey(cid){
+  const ref = doc(db,'conversations',cid);
+  const snap = await getDoc(ref);
+  const data = snap.data();
+  if (!data || !data.keys) throw new Error('No keys found in conversation');
+
+  const blobB64 = data.keys[auth.currentUser.uid];
+  if(!blobB64) throw new Error('No key for you in this conversation.');
+
+  const priv = await getPrivateKey();
+  if (!priv) throw new Error('No private key available');
+
+  const raw = await rsaDecrypt(priv, b64ToBytes(blobB64));
+  const key = await crypto.subtle.importKey('raw', raw.buffer, {name:'AES-GCM'}, false, ['encrypt','decrypt']);
+  return { aesKey: key };
+}
+
+// --- Crypto helpers ---
+function spkiToPem(buf){
+  const b = btoa(String.fromCharCode(...new Uint8Array(buf)));
+  return `-----BEGIN PUBLIC KEY-----\n${b.match(/.{1,64}/g).join('\n')}\n-----END PUBLIC KEY-----`;
+}
+function pkcs8ToPem(buf){
+  const b = btoa(String.fromCharCode(...new Uint8Array(buf)));
+  return `-----BEGIN PRIVATE KEY-----\n${b.match(/.{1,64}/g).join('\n')}\n-----END PRIVATE KEY-----`;
+}
+async function importPublicKey(pem){
+  const b64 = pem.replace(/-----(BEGIN|END) PUBLIC KEY-----/g,'').replace(/\s+/g,'');
+  const der = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  return crypto.subtle.importKey('spki', der, {name:'RSA-OAEP', hash:'SHA-256'}, true, ['encrypt']);
+}
+async function importPrivateKey(pem){
+  const b64 = pem.replace(/-----(BEGIN|END) PRIVATE KEY-----/g,'').replace(/\s+/g,'');
+  const der = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  return crypto.subtle.importKey('pkcs8', der, {name:'RSA-OAEP', hash:'SHA-256'}, false, ['decrypt']);
+}
+async function rsaEncrypt(pub, bytes){
+  const enc = await crypto.subtle.encrypt({name:'RSA-OAEP'}, pub, bytes);
+  return bytesToB64(new Uint8Array(enc));
+}
+async function rsaDecrypt(priv, bytes){
+  const dec = await crypto.subtle.decrypt({name:'RSA-OAEP'}, priv, bytes);
+  return new Uint8Array(dec);
+}
+async function aesEncryptText(key, text){
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, new TextEncoder().encode(text));
+  return { cipherB64: bytesToB64(new Uint8Array(enc)), ivB64: bytesToB64(iv) };
+}
+async function aesDecryptText(key, cipherB64, ivB64){
+  const iv = b64ToBytes(ivB64);
+  const data = b64ToBytes(cipherB64);
+  const dec = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, data);
+  return new TextDecoder().decode(dec);
+}
+function bytesToB64(bytes){
+  let bin = ''; for (let i=0;i<bytes.length;i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+function b64ToBytes(b64){
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for(let i=0;i<bin.length;i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+/* =====================
+   12) UNREAD HANDLING
+   ===================== */
+async function clearUnreadFor(peerUid){
+  const myUid = auth.currentUser.uid;
+  const cid = convId(myUid, peerUid);
+  // local UI
+  messageCounts[peerUid] = 0;
+  updateUserBadge(peerUid);
+  // remove from my unread list in Firestore
+  try {
+    await updateDoc(doc(db, 'users', myUid), { unreadMessages: arrayRemove(cid) });
+  } catch {}
+}
+
+// Background listener to bump unread badges
+onAuthStateChanged(auth, (user) => {
+  if (user) {
+    const userRef = doc(db, 'users', user.uid);
+    onSnapshot(userRef, (docu) => {
+      if (!docu.exists()) return;
+      const data = docu.data();
+      const unread = data.unreadMessages || [];
+      // reset then recount
+      Object.keys(messageCounts).forEach(k => messageCounts[k]=0);
+      unread.forEach(cid => {
+        const parts = cid.split('_');
+        const otherUserId = parts[0] === user.uid ? parts[1] : parts[0];
+        if (otherUserId !== user.uid) {
+          messageCounts[otherUserId] = (messageCounts[otherUserId] || 0) + 1;
+        }
+      });
+      // redraw badges
+      Object.keys(messageCounts).forEach(updateUserBadge);
+    });
+  }
+});
+
+/* =====================
+   13) UTILS
+   ===================== */
+function escapeHTML(str){
+  return (str||'').replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+}
